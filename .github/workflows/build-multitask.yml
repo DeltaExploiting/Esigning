@@ -1,0 +1,64 @@
+name: Build Multitask IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Checkout upstream LiveContainer source
+        uses: actions/checkout@v4
+        with:
+          repository: LiveContainer/LiveContainer
+          path: upstream-livecontainer
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer || true
+
+      - name: Build unsigned IPA
+        working-directory: upstream-livecontainer
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project LiveContainer.xcodeproj \
+            -scheme LiveContainer \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$GITHUB_WORKSPACE/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+          APP_PATH=$(find "$GITHUB_WORKSPACE/build/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -type d | head -n 1)
+          test -n "$APP_PATH"
+          mkdir -p "$GITHUB_WORKSPACE/ipa/Payload"
+          cp -R "$APP_PATH" "$GITHUB_WORKSPACE/ipa/Payload/"
+          cd "$GITHUB_WORKSPACE/ipa"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/MultitaskContainer-unsigned.ipa" Payload
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MultitaskContainer-unsigned-ipa
+          path: MultitaskContainer-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload build log bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multitask-build-metadata
+          path: |
+            upstream-livecontainer/LiveContainer.xcodeproj/project.pbxproj
+            upstream-livecontainer/README.md
+          if-no-files-found: ignore
