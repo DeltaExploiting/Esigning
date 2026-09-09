@@ -30,6 +30,144 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Add Signed Apps section
+        working-directory: LiveContainer
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("LiveContainerSwiftUI/Views/AppList/LCAppListView.swift")
+          text = path.read_text(encoding="utf-8")
+
+          marker = "struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {"
+          if "struct LCSignedAppEntry" not in text:
+              section = r'''
+
+          private struct LCSignedAppEntry: Identifiable {
+              let id = UUID()
+              let name: String
+              let version: String
+              let size: String
+              let bundleID: String
+              let iconURL: URL?
+              let ipaURL: URL?
+          }
+
+          private struct LCSignedAppsSection: View {
+              private let apps: [LCSignedAppEntry] = [
+                  LCSignedAppEntry(
+                      name: "XSign",
+                      version: "3.6.6",
+                      size: "19.3 MB",
+                      bundleID: "co.xsign",
+                      iconURL: URL(string: "https://raw.githubusercontent.com/DeltaExploiting/Esigning/main/assets/xsign-icon.png"),
+                      ipaURL: URL(string: "https://github.com/DeltaExploiting/Esigning/releases/latest/download/XSign-3.6.6.ipa")
+                  )
+              ]
+
+              var body: some View {
+                  VStack(alignment: .leading, spacing: 12) {
+                      HStack {
+                          Text("Signed Apps")
+                              .font(.system(.title2).bold())
+                          Spacer()
+                      }
+
+                      Text("Apps published by the site owner that can be imported as LiveContainer guest apps.")
+                          .font(.subheadline)
+                          .foregroundStyle(.secondary)
+
+                      ForEach(apps) { app in
+                          HStack(spacing: 12) {
+                              Group {
+                                  if let iconURL = app.iconURL {
+                                      AsyncImage(url: iconURL) { phase in
+                                          switch phase {
+                                          case .success(let image): image.resizable().scaledToFill()
+                                          default: Image(systemName: "app.fill").resizable().scaledToFit().padding(14).foregroundStyle(.secondary)
+                                          }
+                                      }
+                                  } else {
+                                      Image(systemName: "app.fill").resizable().scaledToFit().padding(14).foregroundStyle(.secondary)
+                                  }
+                              }
+                              .frame(width: 62, height: 62)
+                              .background(.quaternary)
+                              .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                              VStack(alignment: .leading, spacing: 3) {
+                                  Text(app.name).font(.headline)
+                                  Text("Version \(app.version)  •  \(app.size)")
+                                      .font(.caption)
+                                      .foregroundStyle(.secondary)
+                                  Text(app.bundleID)
+                                      .font(.caption2)
+                                      .foregroundStyle(.secondary)
+
+                                  HStack(spacing: 8) {
+                                      Label("Signed", systemImage: "checkmark.seal.fill")
+                                          .font(.caption2.bold())
+                                          .foregroundStyle(.green)
+
+                                      Label("Multitask", systemImage: "rectangle.on.rectangle")
+                                          .font(.caption2.bold())
+                                          .foregroundStyle(.secondary)
+                                  }
+
+                                  HStack(spacing: 8) {
+                                      if let ipaURL = app.ipaURL {
+                                          Link(destination: ipaURL) {
+                                              Label("Download", systemImage: "arrow.down.circle.fill")
+                                          }
+                                          .buttonStyle(.borderedProminent)
+
+                                          Button {
+                                              NotificationCenter.default.post(
+                                                  name: NSNotification.InstallAppNotification,
+                                                  object: ["url": ipaURL]
+                                              )
+                                          } label: {
+                                              Label("Import", systemImage: "square.and.arrow.down")
+                                          }
+                                          .buttonStyle(.bordered)
+                                      } else {
+                                          Text("IPA unavailable")
+                                              .font(.caption)
+                                              .foregroundStyle(.secondary)
+                                      }
+                                  }
+                                  .font(.caption)
+                              }
+                              Spacer(minLength: 0)
+                          }
+                          .padding(12)
+                          .background(.thinMaterial)
+                          .clipShape(RoundedRectangle(cornerRadius: 16))
+                      }
+
+                      Text("Only distribute IPAs you are authorized to redistribute. A signed IPA still needs a compatible iOS installation and provisioning workflow.")
+                          .font(.caption)
+                          .foregroundStyle(.secondary)
+                  }
+                  .padding()
+              }
+          }
+          '''
+              text = text.replace(marker, section + "\n" + marker, 1)
+
+          scroll_marker = "            ScrollView {\n"
+          if "LCSignedAppsSection()" not in text:
+              replacement = "            ScrollView {\n                LCSignedAppsSection()\n"
+              if scroll_marker not in text:
+                  raise SystemExit("ScrollView marker not found")
+              text = text.replace(scroll_marker, replacement, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          grep -n "Signed Apps\|LCSignedAppsSection" LiveContainerSwiftUI/Views/AppList/LCAppListView.swift
+
       - name: Show build inputs
         working-directory: LiveContainer
         run: |
