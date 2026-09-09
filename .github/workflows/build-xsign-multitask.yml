@@ -13,6 +13,7 @@ jobs:
     runs-on: macos-latest
     env:
       ARCHIVE_PATH: ${{ github.workspace }}/build/LiveContainer.xcarchive
+      XSIGN_IPA_URL: https://github.com/DeltaExploiting/Esigning/releases/download/2727/00008110-0009395E26C0E01E_xsign.2.ipa
 
     steps:
       - name: Checkout this repo
@@ -20,6 +21,13 @@ jobs:
         with:
           path: site
           fetch-depth: 1
+
+      - name: Download signed XSign IPA
+        run: |
+          set -euxo pipefail
+          curl -fL "$XSIGN_IPA_URL" -o "$GITHUB_WORKSPACE/XSign-3.6.6-signed.ipa"
+          test -s "$GITHUB_WORKSPACE/XSign-3.6.6-signed.ipa"
+          shasum -a 256 "$GITHUB_WORKSPACE/XSign-3.6.6-signed.ipa"
 
       - name: Checkout LiveContainer
         uses: actions/checkout@v4
@@ -61,6 +69,15 @@ jobs:
             CODE_SIGN_IDENTITY='' \
             | tee "$GITHUB_WORKSPACE/xcodebuild.log"
 
+      - name: Bundle signed XSign into LiveContainer
+        run: |
+          set -euxo pipefail
+          APP="$ARCHIVE_PATH/Products/Applications/LiveContainer.app"
+          test -d "$APP"
+          cp "$GITHUB_WORKSPACE/XSign-3.6.6-signed.ipa" "$APP/XSign-3.6.6-signed.ipa"
+          test -s "$APP/XSign-3.6.6-signed.ipa"
+          ls -lh "$APP/XSign-3.6.6-signed.ipa"
+
       - name: Package IPA
         run: |
           set -euxo pipefail
@@ -74,7 +91,7 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: MultitaskContainer-XSign-unsigned
+          name: MultitaskContainer-XSign-bundled
           path: MultitaskContainer-XSign-unsigned.ipa
           retention-days: 7
 
