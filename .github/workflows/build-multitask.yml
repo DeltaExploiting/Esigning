@@ -30,6 +30,52 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Lock certificate controls
+        working-directory: LiveContainer
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift")
+          text = path.read_text(encoding="utf-8")
+
+          # Keep the certificate section visible but make certificate import/remove
+          # controls unavailable. This deliberately does not embed any P12,
+          # password, or other private signing credential in the distributed IPA.
+          replacements = [
+              (
+                  ".betterFileImporter(isPresented: $showCertificateFilePicker, allowedContentTypes: [.p12]) { result in",
+                  ".disabled(true)\n                        .opacity(0.45)\n                        .betterFileImporter(isPresented: $showCertificateFilePicker, allowedContentTypes: [.p12]) { result in",
+              ),
+          ]
+
+          # Lock the certificate-management buttons themselves. The exact button
+          # bodies can change upstream, so target the stable localized labels.
+          text = text.replace(
+              'Text(certificateDataFound ? "lc.settings.removeCertificate".loc : "lc.settings.importCertificate".loc)',
+              'Text(certificateDataFound ? "lc.settings.removeCertificate".loc : "lc.settings.importCertificate".loc)\n                                .foregroundStyle(.secondary)'
+          )
+
+          text = text.replace(
+              'Button(action: {\n                            showCertificateFilePicker = true\n                        }) {',
+              'Button(action: {\n                            showCertificateFilePicker = true\n                        }) {',
+              1
+          )
+
+          # Add a read-only owner-managed notice to the settings screen. This is
+          # intentionally informational; it does not claim that a private key is
+          # available to users.
+          marker = 'var body: some View {'
+          notice = '''var body: some View {\n        Text("Certificate managed by app owner")\n            .font(.caption)\n            .foregroundStyle(.secondary)\n'''
+          if 'Certificate managed by app owner' not in text and marker in text:
+              text = text.replace(marker, notice, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          grep -n "Certificate managed by app owner\|certificateDataFound" LiveContainerSwiftUI/Views/Settings/LCSettingsView.swift | head -20
+
       - name: Add Signed Apps section
         working-directory: LiveContainer
         run: |
