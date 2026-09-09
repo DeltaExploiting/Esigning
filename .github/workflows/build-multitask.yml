@@ -5,60 +5,96 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    runs-on: macos-15
-    steps:
-      - name: Checkout this repository
-        uses: actions/checkout@v4
+    name: Build LiveContainer multitask IPA
+    runs-on: macos-latest
+    env:
+      SCHEME: LiveContainer
+      ARCHIVE_PATH: ${{ github.workspace }}/build/LiveContainer.xcarchive
 
-      - name: Checkout upstream LiveContainer source
+    steps:
+      - name: Select Xcode 26.2
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.2'
+
+      - name: Checkout upstream LiveContainer
         uses: actions/checkout@v4
         with:
           repository: LiveContainer/LiveContainer
-          path: upstream-livecontainer
+          path: LiveContainer
           submodules: recursive
           fetch-depth: 1
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer || true
-
-      - name: Build unsigned IPA
-        working-directory: upstream-livecontainer
-        shell: bash
+      - name: Show build inputs
+        working-directory: LiveContainer
         run: |
-          set -euo pipefail
-          xcodebuild \
+          set -euxo pipefail
+          xcodebuild -version
+          test -d LiveContainer.xcodeproj
+          xcodebuild -list -project LiveContainer.xcodeproj
+
+      - name: Resolve Swift packages
+        working-directory: LiveContainer
+        run: |
+          set -euxo pipefail
+          xcodebuild -resolvePackageDependencies \
             -project LiveContainer.xcodeproj \
-            -scheme LiveContainer \
+            -scheme "$SCHEME"
+
+      - name: Archive unsigned app
+        working-directory: LiveContainer
+        run: |
+          set -o pipefail
+          mkdir -p "$(dirname "$ARCHIVE_PATH")"
+          xcodebuild archive \
+            -project LiveContainer.xcodeproj \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
+            -archivePath "$ARCHIVE_PATH" \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath "$GITHUB_WORKSPACE/build" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY='' \
+            | tee "$GITHUB_WORKSPACE/xcodebuild.log"
 
-          APP_PATH=$(find "$GITHUB_WORKSPACE/build/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -type d | head -n 1)
-          test -n "$APP_PATH"
-          mkdir -p "$GITHUB_WORKSPACE/ipa/Payload"
-          cp -R "$APP_PATH" "$GITHUB_WORKSPACE/ipa/Payload/"
-          cd "$GITHUB_WORKSPACE/ipa"
-          /usr/bin/zip -qry "$GITHUB_WORKSPACE/MultitaskContainer-unsigned.ipa" Payload
+      - name: Package IPA
+        run: |
+          set -euxo pipefail
+          APP_PATH="$ARCHIVE_PATH/Products/Applications/LiveContainer.app"
+          test -d "$APP_PATH"
+          rm -rf "$GITHUB_WORKSPACE/Payload"
+          mkdir -p "$GITHUB_WORKSPACE/Payload"
+          ditto "$APP_PATH" "$GITHUB_WORKSPACE/Payload/LiveContainer.app"
+          cd "$GITHUB_WORKSPACE"
+          /usr/bin/zip -qry "MultitaskContainer-unsigned.ipa" Payload
+          test -s "MultitaskContainer-unsigned.ipa"
 
-      - name: Upload unsigned IPA
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: MultitaskContainer-unsigned-ipa
           path: MultitaskContainer-unsigned.ipa
           if-no-files-found: error
+          retention-days: 7
 
-      - name: Upload build log bundle
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveContainer-xcarchive
+          path: ${{ env.ARCHIVE_PATH }}
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: multitask-build-metadata
-          path: |
-            upstream-livecontainer/LiveContainer.xcodeproj/project.pbxproj
-            upstream-livecontainer/README.md
+          name: multitask-xcodebuild-log
+          path: xcodebuild.log
           if-no-files-found: ignore
