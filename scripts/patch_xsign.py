@@ -3,17 +3,15 @@ import sys
 
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('LiveContainer')
 
-# XSign is supplied as an already-signed guest. LiveContainer patches the guest
-# executable before launch, so this build keeps XSign in no-resign/JIT mode and
-# defaults it to multitasking.
+# Keep the already-signed XSign guest in no-resign/JIT mode and make it default
+# to LiveContainer's multitasking launcher.
 model = root / 'LiveContainerSwiftUI/Models/LCAppModel.swift'
 s = model.read_text(encoding='utf-8')
 marker = '        self.uiIsMultitaskModeSpecificed = appInfo.multitaskSpecified\n'
 patch = '''        self.uiIsMultitaskModeSpecificed = appInfo.multitaskSpecified
 
-        // XSign is supplied as an already-signed guest. LiveContainer patches the
-        // guest executable, so this build keeps XSign in no-resign/JIT mode and
-        // defaults it to multitasking.
+        // Bundled XSign is already signed. LiveContainer patches the guest
+        // executable before launch, so keep its signature and use JIT.
         if appInfo.bundleIdentifier() == "co.xsign" {
             self.uiDontSign = true
             self.uiIsJITNeeded = true
@@ -26,9 +24,8 @@ if 'appInfo.bundleIdentifier() == "co.xsign"' not in s:
         raise SystemExit('LCAppModel marker not found')
     model.write_text(s.replace(marker, patch, 1), encoding='utf-8')
 
-# Patch the Apps list so the bundled IPA is imported into My Apps automatically
-# on the first launch of this build. The normal LiveContainer installer then
-# creates the regular LCAppModel, so XSign behaves like any other installed app.
+# Automatically import the bundled IPA into the normal My Apps database on
+# first launch. The standard installer owns the actual app-container layout.
 apps = root / 'LiveContainerSwiftUI/Views/AppList/LCAppListView.swift'
 s = apps.read_text(encoding='utf-8')
 
@@ -61,21 +58,14 @@ method_patch = '''    @MainActor
         guard !defaults.bool(forKey: key) else { return }
         guard let ipaURL = Bundle.main.url(forResource: "XSign-3.6.6-signed", withExtension: "ipa") else { return }
 
-        let appsRoot = LCUtils.appGroupURL.appendingPathComponent("Apps", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: appsRoot, withIntermediateDirectories: true)
-        } catch {
-            return
-        }
-
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("XSign-3.6.6-signed.ipa")
         do {
             if FileManager.default.fileExists(atPath: tempURL.path) {
                 try FileManager.default.removeItem(at: tempURL)
             }
             try FileManager.default.copyItem(at: ipaURL, to: tempURL)
-            defaults.set(true, forKey: key)
             await installFromUrl(urlStr: tempURL.absoluteString)
+            defaults.set(true, forKey: key)
         } catch {
             // Leave the flag unset so a later launch can retry.
         }
@@ -90,8 +80,8 @@ if 'private func installBundledXSignIfNeeded()' not in s:
 
 apps.write_text(s, encoding='utf-8')
 
-# Add a built-in Sources entry too. This gives the user a visible XSign card if
-# the automatic My Apps import is skipped or needs to be repeated manually.
+# Also expose XSign in Sources as a fallback. If automatic import is skipped,
+# the user can select the signed IPA manually from Files.
 src = root / 'LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift'
 s = src.read_text(encoding='utf-8')
 if 'XSign — Signed IPA' in s:
@@ -127,25 +117,30 @@ if old not in s:
     raise SystemExit('sources init marker not found')
 s = s.replace(old, new, 1)
 
-old = '''        guard let downloadURL = app.latestVersion?.downloadURL else {
+if 'showXSignImporter' not in s:
+    state_marker = '    @State private var isViewAppeared = false\n'
+    if state_marker not in s:
+        raise SystemExit('source state marker not found')
+    s = s.replace(state_marker, state_marker + '    @State private var showXSignImporter = false\n', 1)
+
+install_marker = '''        guard let downloadURL = app.latestVersion?.downloadURL else {
 '''
-new = '''        if app.bundleIdentifier == "co.xsign" {
+if 'if app.bundleIdentifier == "co.xsign"' not in s:
+    if install_marker not in s:
+        raise SystemExit('source install marker not found')
+    s = s.replace(install_marker, '''        if app.bundleIdentifier == "co.xsign" {
             showXSignImporter = true
             return
         }
         guard let downloadURL = app.latestVersion?.downloadURL else {
-'''
-if old in s and 'showXSignImporter = true' not in s:
-    s = s.replace(old, new, 1)
+''', 1)
 
-old = '''    @State private var isViewAppeared = false
+search_marker = '''        .searchable(text: $searchContext.query, placement: .navigationBarDrawer(displayMode: .always))
 '''
-if old in s and 'showXSignImporter' not in s:
-    s = s.replace(old, old + '    @State private var showXSignImporter = false\n', 1)
-
-old = '''        .searchable(text: $searchContext.query, placement: .navigationBarDrawer(displayMode: .always))
-'''
-new = '''        .searchable(text: $searchContext.query, placement: .navigationBarDrawer(displayMode: .always))
+if '.fileImporter(isPresented: $showXSignImporter' not in s:
+    if search_marker not in s:
+        raise SystemExit('source searchable marker not found')
+    s = s.replace(search_marker, '''        .searchable(text: $searchContext.query, placement: .navigationBarDrawer(displayMode: .always))
         .fileImporter(isPresented: $showXSignImporter, allowedContentTypes: [UTType.data, UTType.archive], allowsMultipleSelection: false) { result in
             if case .success(let urls) = result, let url = urls.first {
                 let accessed = url.startAccessingSecurityScopedResource()
@@ -159,9 +154,7 @@ new = '''        .searchable(text: $searchContext.query, placement: .navigationB
                 } catch { }
             }
         }
-'''
-if old in s and '.fileImporter(isPresented: $showXSignImporter' not in s:
-    s = s.replace(old, new, 1)
+''', 1)
 
 src.write_text(s, encoding='utf-8')
-print('Patched XSign My Apps auto-import + multitask + built-in Sources entry')
+print('Patched bundled XSign My Apps auto-import and multitask configuration')
