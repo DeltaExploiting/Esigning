@@ -26,8 +26,8 @@ if 'appInfo.bundleIdentifier() == "co.xsign"' not in s:
         raise SystemExit('LCAppModel marker not found')
     model.write_text(s.replace(marker, patch, 1), encoding='utf-8')
 
-# Add a built-in XSign entry to Sources. Its Import button opens the Files picker
-# for the user's authorized signed XSign IPA, avoiding a fake/broken download URL.
+# Add a built-in XSign entry to Sources. The IPA is bundled into the host app by
+# the CI workflow and is installed directly from the host bundle when available.
 src = root / 'LiveContainerSwiftUI/Views/LCAltStoreSourcesView.swift'
 s = src.read_text(encoding='utf-8')
 if 'XSign — Signed IPA' in s:
@@ -59,7 +59,7 @@ new = '''    init() {
             version: "3.6.6",
             buildVersion: nil,
             releaseDate: nil,
-            localizedDescription: "Signed XSign IPA. Import your authorized signed IPA; LiveContainer will keep it as the guest and launch it in multitask mode.",
+            localizedDescription: "Signed XSign IPA bundled with this LiveContainer build. Launch it directly from Sources in multitask mode.",
             downloadURL: URL(fileURLWithPath: "/__builtin_xsign.ipa"),
             size: 20_228_529
         )
@@ -68,7 +68,7 @@ new = '''    init() {
             bundleIdentifier: "co.xsign",
             developerName: "XSign",
             subtitle: "Signed guest • Multitask",
-            description: "Import the signed XSign 3.6.6 IPA you already own. This build is configured for LiveContainer multitasking and JIT.",
+            description: "Signed XSign 3.6.6 bundled with this LiveContainer build. The host keeps the guest unsigned-by-LiveContainer and uses JIT mode for the patched executable.",
             iconURL: nil,
             tintColor: nil,
             screenshots: [],
@@ -79,8 +79,8 @@ new = '''    init() {
         let source = AltStoreSource(
             name: "ESign Built-in Apps",
             identifier: "com.deltaexploiting.esigning.builtin",
-            subtitle: "Signed guest apps for this LiveContainer build",
-            description: "Built-in app entries for authorized local IPA imports.",
+            subtitle: "Bundled signed guest apps",
+            description: "Apps bundled into this LiveContainer build.",
             iconURL: nil,
             headerURL: nil,
             tintColor: Color.blue,
@@ -129,7 +129,23 @@ old = '''    @MainActor
 new = '''    @MainActor
     private func install(app: AltStoreSourceApp) {
         if app.bundleIdentifier == "co.xsign" {
-            showXSignImporter = true
+            if let bundled = Bundle.main.url(forResource: "XSign-3.6.6-signed", withExtension: "ipa") {
+                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("XSign-3.6.6-signed.ipa")
+                do {
+                    if FileManager.default.fileExists(atPath: tempURL.path) {
+                        try FileManager.default.removeItem(at: tempURL)
+                    }
+                    try FileManager.default.copyItem(at: bundled, to: tempURL)
+                    DataManager.shared.model.selectedTab = .apps
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        NotificationCenter.default.post(name: NSNotification.InstallAppNotification, object: ["url": tempURL])
+                    }
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+            } else {
+                showXSignImporter = true
+            }
             return
         }
         guard let downloadURL = app.latestVersion?.downloadURL else {
@@ -178,7 +194,7 @@ s = s.replace(old, new, 1)
 old = '''                Text("lc.common.install".loc)
                     .bold()
 '''
-new = '''                Text(app.bundleIdentifier == "co.xsign" ? "Import" : "lc.common.install".loc)
+new = '''                Text(app.bundleIdentifier == "co.xsign" ? "Launch" : "lc.common.install".loc)
                     .bold()
 '''
 if old not in s:
@@ -186,4 +202,4 @@ if old not in s:
 s = s.replace(old, new, 1)
 
 src.write_text(s, encoding='utf-8')
-print('Patched XSign source entry + local IPA importer + multitask config')
+print('Patched bundled XSign source entry + direct bundled IPA install + multitask config')
