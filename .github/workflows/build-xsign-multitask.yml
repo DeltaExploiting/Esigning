@@ -15,10 +15,11 @@ jobs:
       ARCHIVE_PATH: ${{ github.workspace }}/build/LiveContainer.xcarchive
 
     steps:
-      - name: Select Xcode 26.2
-        uses: maxim-lobanov/setup-xcode@v1
+      - name: Checkout this repo
+        uses: actions/checkout@v4
         with:
-          xcode-version: '26.2'
+          path: site
+          fetch-depth: 1
 
       - name: Checkout LiveContainer
         uses: actions/checkout@v4
@@ -28,88 +29,16 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Configure XSign for multitasking
-        working-directory: LiveContainer
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('LiveContainerSwiftUI/Models/LCAppModel.swift')
-          s = p.read_text(encoding='utf-8')
-          marker = '        self.uiIsMultitaskModeSpecificed = appInfo.multitaskSpecified\n'
-          patch = '''        self.uiIsMultitaskModeSpecificed = appInfo.multitaskSpecified
+      - name: Select Xcode 26.2
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.2'
 
-        // XSign is distributed as an already-signed guest. LiveContainer patches
-        // guest executables before launch, so use JIT instead of re-signing it.
-        if appInfo.bundleIdentifier() == "co.xsign" {
-            self.uiDontSign = true
-            self.uiIsJITNeeded = true
-            self.uiClassicMode = false
-            self.uiIsMultitaskModeSpecificed = .yes
-        }
-'''
-          if 'appInfo.bundleIdentifier() == "co.xsign"' not in s:
-              if marker not in s:
-                  raise SystemExit('LCAppModel initialization marker not found')
-              s = s.replace(marker, patch, 1)
-              p.write_text(s, encoding='utf-8')
-          PY
-          grep -n 'co.xsign\|uiDontSign\|uiIsJITNeeded' LiveContainerSwiftUI/Models/LCAppModel.swift
+      - name: Configure XSign
+        run: python3 site/scripts/patch_xsign.py LiveContainer
 
-      - name: Add XSign Signed Apps card
-        working-directory: LiveContainer
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('LiveContainerSwiftUI/Views/AppList/LCAppListView.swift')
-          s = p.read_text(encoding='utf-8')
-          marker = 'struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {'
-          if 'XSign 3.6.6' not in s:
-              section = '''
-
-          private struct LCSignedAppsSection: View {
-              var body: some View {
-                  VStack(alignment: .leading, spacing: 10) {
-                      Text("Signed Apps").font(.title2.bold())
-                      HStack(spacing: 12) {
-                          AsyncImage(url: URL(string: "https://raw.githubusercontent.com/DeltaExploiting/Esigning/main/assets/xsign-icon.png")) { phase in
-                              if case .success(let image) = phase { image.resizable().scaledToFill() }
-                              else { Image(systemName: "app.fill").resizable().scaledToFit().padding(12) }
-                          }
-                          .frame(width: 60, height: 60)
-                          .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                          VStack(alignment: .leading, spacing: 3) {
-                              Text("XSign 3.6.6").font(.headline)
-                              Text("19.3 MB  •  co.xsign").font(.caption).foregroundStyle(.secondary)
-                              Label("Signed • Multitask", systemImage: "checkmark.seal.fill").font(.caption2)
-                          }
-                          Spacer()
-                      }
-                      HStack {
-                          Link("Download", destination: URL(string: "https://github.com/DeltaExploiting/Esigning/releases/latest/download/XSign-3.6.6.ipa")!)
-                              .buttonStyle(.borderedProminent)
-                          Text("Import the IPA, then XSign launches in multitask mode by default.")
-                              .font(.caption).foregroundStyle(.secondary)
-                      }
-                  }
-                  .padding()
-                  .background(.thinMaterial)
-                  .clipShape(RoundedRectangle(cornerRadius: 16))
-              }
-          }
-          '''
-              if marker not in s:
-                  raise SystemExit('LCAppListView marker not found')
-              s = s.replace(marker, section + '\n' + marker, 1)
-              scroll = '            ScrollView {\n'
-              if scroll not in s:
-                  raise SystemExit('ScrollView marker not found')
-              s = s.replace(scroll, scroll + '                LCSignedAppsSection()\n', 1)
-              p.write_text(s, encoding='utf-8')
-          PY
-          grep -n 'Signed Apps\|XSign 3.6.6' LiveContainerSwiftUI/Views/AppList/LCAppListView.swift
+      - name: Show patch
+        run: grep -n 'co.xsign\|uiDontSign\|uiIsJITNeeded\|uiIsMultitaskModeSpecificed' LiveContainer/LiveContainerSwiftUI/Models/LCAppModel.swift
 
       - name: Resolve packages
         working-directory: LiveContainer
